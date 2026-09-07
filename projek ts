@@ -1,0 +1,81 @@
+cd "C:\Stata_Fasya"
+global data "C:\Stata_Fasya\data"
+global log "C:\Stata_Fasya\log"
+global output "C:\Stata_Fasya\output"
+
+log using "$log\TSprojek1",replace
+
+**Efek Suku Bunga Jangka Panjang terhadap Utang dan Belanja Pemerintah germany: VAR**
+
+use "$data\JSTdatasetR6", clear 
+describe
+keep if country=="Germany"
+keep if year>=1971
+br
+keep ltrate debtgdp expenditure year 
+
+tsset year, yearly
+
+gen lexpenditure = log(expenditure)
+ 
+tsline ltrate lexpenditure debtgdp 
+
+dfuller ltrate
+dfuller lexpenditure
+dfuller debtgdp
+
+dfuller d.ltrate
+dfuller d.lexpenditure
+dfuller d.debtgdp
+*stationer  
+
+*lag optimum menggunakan cara pre-estimation
+varsoc d.ltrate d.lexpenditure d.debtgdp
+
+*regresi VAR
+var d.ltrate d.lexpenditure d.debtgdp, lags(1/1) 
+
+*kausalitas diantara ketiga variabel
+vargranger
+
+*uji stabilitas
+varstable, graph
+
+*uji kointegrasi dengan grafik dan uji Johansen
+tsline ltrate lexpenditure debtgdp 
+vecrank ltrate lexpenditure debtgdp 
+
+*grafik IRF untuk 10 tahun mendatang 
+var d.ltrate d.lexpenditure d.debtgdp, lags(1/1)
+irf create TSReview,step(10)set(ltrateeffect, replace)
+
+irf graph irf 
+
+*pengaruh d.ltrate thd expenditure dan debtgdp 10 period mendatang 
+irf table irf
+
+irf table irf, impulse(d.ltrate)response(d.ltrate d.debtgdp d.lexpenditure)noci 
+
+irf table irf, impulse(d.debtgdp)response(d.ltrate d.debtgdp d.lexpenditure)noci 
+
+irf table irf, impulse(d.lexpenditure)response(d.ltrate d.debtgdp d.lexpenditure)noci 
+
+*grafik FEVD untuk 10 tahun mendatang
+irf graph fevd 
+
+*pengaruh d.ltrate thd expenditure dan debtgdp 10 period mendatang 
+irf table fevd 
+
+irf table fevd, irf(TSReview)impulse(d.ltrate)response(d.ltrate d.debtgdp d.lexpenditure)noci 
+
+irf table fevd, irf(TSReview)impulse(d.debtgdp)response(d.ltrate d.debtgdp d.lexpenditure)noci 
+
+irf table fevd, irf(TSReview)impulse(d.lexpenditure)response(d.ltrate d.debtgdp d.lexpenditure)noci 
+
+*Forecasting sampai 10 periode selanjutnya
+fcast compute fc_,step(10)
+fcast graph fc_D_ltrate
+fcast graph fc_D_lexpenditure
+fcast graph fc_D_debtgdp 
+
+log close
