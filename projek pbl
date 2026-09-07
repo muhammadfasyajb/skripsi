@@ -1,0 +1,275 @@
+CREATE TABLE user_df (
+    USER_ID INT PRIMARY KEY,
+    USER_TYPE VARCHAR(50),
+    USER_GENDER VARCHAR(10),
+    TRAVEL_PURPOSE VARCHAR(100),
+    USER_AGE INT
+);
+
+CREATE TABLE property_df (
+    PROPERTY_CODE VARCHAR(50) PRIMARY KEY,
+    CITY VARCHAR(100),
+    DISTRICT VARCHAR(100),
+    COHORT_DATE DATE,
+    BRAND_TYPE VARCHAR(50),
+    INVENTORY INT,
+    OCCUPANCY_RATE FLOAT
+);
+
+CREATE TABLE booking_df (
+    BOOKING_ID BIGINT PRIMARY KEY,
+    USER_ID INT,
+    PROPERTY_CODE VARCHAR(50),
+    BOOKING_DATE DATE,
+    CHECK_IN_DATE DATE,
+    CHECK_OUT_DATE DATE,
+    ROOMS INT,
+    NIGHTS INT,
+    ROOM_NIGHTS INT,
+    REVENUE_DOLLAR FLOAT,
+    STAY_DURATION INT,
+    LEAD_TIME INT,
+    Revenue_per_Night FLOAT,
+    FOREIGN KEY (USER_ID) REFERENCES user_df(USER_ID),
+    FOREIGN KEY (PROPERTY_CODE) REFERENCES property_df(PROPERTY_CODE)
+);
+
+COPY user_df (USER_ID, USER_TYPE, USER_GENDER, TRAVEL_PURPOSE, USER_AGE)
+FROM 'C:\\Program Files\\PostgreSQL\\17\\data\\user_df.csv'
+DELIMITER ',' CSV HEADER;
+
+COPY property_df (PROPERTY_CODE, CITY, DISTRICT, COHORT_DATE, BRAND_TYPE, INVENTORY, OCCUPANCY_RATE)
+FROM 'C:\\Program Files\\PostgreSQL\\17\\data\\property_df.csv'
+DELIMITER ',' CSV HEADER;
+
+COPY booking_df (BOOKING_ID, USER_ID, PROPERTY_CODE, BOOKING_DATE, CHECK_IN_DATE, CHECK_OUT_DATE, ROOMS, NIGHTS, ROOM_NIGHTS, REVENUE_DOLLAR, STAY_DURATION, LEAD_TIME, Revenue_per_Night)
+FROM 'C:\\Program Files\\PostgreSQL\\17\\data\\booking_df.csv'
+DELIMITER ',' CSV HEADER;
+
+------ Determine customer segmentation based on purchasing behavior to identify a more focused target market ------
+SELECT 
+    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY recency_days) AS recency_25,
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY recency_days) AS recency_50,
+    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY recency_days) AS recency_75,
+    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY REVENUE_DOLLAR) AS revenue_25,
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY REVENUE_DOLLAR) AS revenue_50,
+    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY REVENUE_DOLLAR) AS revenue_75,
+    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY FREQUENCY_BOOKING) AS freq_25,
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY FREQUENCY_BOOKING) AS freq_50,
+    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY FREQUENCY_BOOKING) AS freq_75,
+    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY REVENUE_PER_NIGHT) AS revnight_25,
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY REVENUE_PER_NIGHT) AS revnight_50,
+    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY REVENUE_PER_NIGHT) AS revnight_75,
+    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY stay_duration) AS stayduration_25,
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY stay_duration) AS stayduration_50,
+    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY stay_duration) AS stayduration_75
+FROM (
+    SELECT 
+        b.USER_ID,
+        SUM(b.REVENUE_DOLLAR) AS REVENUE_DOLLAR,
+        COUNT(b.BOOKING_ID) AS FREQUENCY_BOOKING,
+        AVG(b.REVENUE_PER_NIGHT) AS REVENUE_PER_NIGHT,
+        AVG(b.stay_duration) AS stay_duration,
+        (DATE '2024-11-07' - MAX(b.CHECK_OUT_DATE)) AS recency_days
+    FROM booking_df b
+    JOIN user_df u ON b.USER_ID = u.USER_ID
+    GROUP BY b.USER_ID
+) AS subquery;
+
+ALTER TABLE user_df
+ADD COLUMN revenue_segment VARCHAR,
+ADD COLUMN frequency_segment VARCHAR,
+ADD COLUMN revenue_per_night_segment VARCHAR,
+ADD COLUMN recency_segment VARCHAR,
+ADD COLUMN stay_duration_segment VARCHAR;
+
+WITH segmentasi AS (
+    SELECT 
+        b.USER_ID,
+        CASE --- revenue_segment
+            WHEN SUM(b.REVENUE_DOLLAR) <= 1848.575 THEN 'Low Revenue'
+            WHEN SUM(b.REVENUE_DOLLAR) > 1848.575 AND SUM(b.REVENUE_DOLLAR) <= 2000.565 THEN 'Medium Revenue'
+            ELSE 'High Revenue'
+        END AS revenue_segment,
+        
+        CASE --- frequency_segment
+            WHEN COUNT(b.BOOKING_ID) <= 93 THEN 'Rare'
+            WHEN COUNT(b.BOOKING_ID) > 93 AND COUNT(b.BOOKING_ID) <= 100 THEN 'Occasional'
+            ELSE 'Frequent'
+        END AS frequency_segment,
+        
+        CASE --- revenue_per_night_segment
+            WHEN AVG(b.REVENUE_PER_NIGHT) <= 7.0727 THEN 'Budget'
+            WHEN AVG(b.REVENUE_PER_NIGHT) > 7.0727 AND AVG(b.REVENUE_PER_NIGHT) <= 7.4301 THEN 'Midrange'
+            ELSE 'Premium'
+        END AS revenue_per_night_segment,
+        
+        CASE --- recency_segment
+            WHEN (DATE '2024-11-07' - MAX(b.CHECK_OUT_DATE)) <= 39 THEN 'Low Recency'
+            WHEN (DATE '2024-11-07' - MAX(b.CHECK_OUT_DATE)) > 39 AND (DATE '2024-11-07' - MAX(b.CHECK_OUT_DATE)) <= 46 THEN 'Medium Recency'
+            ELSE 'High Recency'
+        END AS recency_segment,
+
+        CASE --- stay_duration_segment
+            WHEN AVG(b.stay_duration) <= 1.9406 THEN 'Short Stay'
+            WHEN AVG(b.stay_duration) > 1.9406 AND AVG(b.stay_duration) <= 2.0524 THEN 'Medium Stay'
+            ELSE 'Long Stay'
+        END AS stay_duration_segment
+
+    FROM booking_df b
+    GROUP BY b.USER_ID
+)
+
+UPDATE user_df
+SET 
+    revenue_segment = s.revenue_segment,
+    frequency_segment = s.frequency_segment,
+    revenue_per_night_segment = s.revenue_per_night_segment,
+    recency_segment = s.recency_segment,
+    stay_duration_segment = s.stay_duration_segment
+FROM segmentasi s
+WHERE user_df.USER_ID = s.USER_ID;
+
+select
+user_id,
+revenue_segment,
+frequency_segment,
+revenue_per_night_segment,
+recency_segment,
+stay_duration_segment
+from user_df ud ;
+
+
+-- Frekuensi User per Segmentasi Revenue
+SELECT
+    revenue_segment,
+    COUNT(USER_ID) AS user_count
+FROM user_df
+GROUP BY revenue_segment
+ORDER BY revenue_segment;
+
+-- Frekuensi User per Segmentasi Frequency
+SELECT
+    frequency_segment,
+    COUNT(USER_ID) AS user_count
+FROM user_df
+GROUP BY frequency_segment
+ORDER BY frequency_segment;
+
+-- Frekuensi User per Segmentasi Revenue per Night
+SELECT
+    revenue_per_night_segment,
+    COUNT(USER_ID) AS user_count
+FROM user_df
+GROUP BY revenue_per_night_segment
+ORDER BY revenue_per_night_segment;
+
+-- Frekuensi User per Segmentasi Recency
+SELECT
+    recency_segment,
+    COUNT(USER_ID) AS user_count
+FROM user_df
+GROUP BY recency_segment
+ORDER BY recency_segment;
+
+-- Frekuensi User per Segmentasi Stay Duration
+SELECT
+    stay_duration_segment,
+    COUNT(USER_ID) AS user_count
+FROM user_df
+GROUP BY stay_duration_segment
+ORDER BY stay_duration_segment;
+  
+WITH ScoredUsers AS (
+    SELECT 
+        USER_ID,
+        -- Hitung Total Skor
+        (CASE revenue_segment 
+            WHEN 'High' THEN 5 WHEN 'Medium' THEN 3 ELSE 1 END) +
+        (CASE recency_segment 
+            WHEN 'High Recency' THEN 5 WHEN 'Medium Recency' THEN 3 ELSE 1 END) +
+        (CASE frequency_segment 
+            WHEN 'Frequent' THEN 5 WHEN 'Occasional' THEN 3 ELSE 1 END) +
+        (CASE revenue_per_night_segment 
+            WHEN 'Premium' THEN 5 WHEN 'Midrange' THEN 3 ELSE 1 END) +
+        (CASE stay_duration_segment 
+            WHEN 'Long Stay' THEN 5 WHEN 'Medium Stay' THEN 3 ELSE 1 END) AS total_score
+    FROM user_df
+)
+SELECT 
+    USER_ID,
+    total_score,
+    -- Kategori Berdasarkan Total Skor
+    CASE
+        WHEN total_score >= 20 THEN 'Most Valuable'
+        WHEN total_score BETWEEN 15 AND 19 THEN 'Loyal'
+        WHEN total_score BETWEEN 11 AND 14 THEN 'Potentially Loyal'
+        WHEN total_score BETWEEN 6 AND 10 THEN 'Need Attention'
+        ELSE 'Lost Sheep'
+    END AS user_category
+FROM ScoredUsers
+ORDER BY total_score DESC;
+SELECT 
+    user_category, 
+    COUNT(*) AS user_count
+FROM user_df
+GROUP BY user_category
+ORDER BY user_count DESC;
+
+----- Compare normal season vs. peak season pricing in 2023 and 2024 to determine if the company's pricing strategy aligned with seasonal demand -----
+----- monthly occupancy rate ------
+WITH Inventory_Per_Property AS (
+    SELECT 
+        b.PROPERTY_CODE,
+        p.INVENTORY AS Property_Inventory  -- Mengambil inventory dari property_df
+    FROM 
+        booking_df b
+    JOIN 
+        property_df p ON b.PROPERTY_CODE = p.PROPERTY_CODE  -- Menggabungkan dengan property_df untuk mendapatkan inventory
+    GROUP BY 
+        b.PROPERTY_CODE, p.INVENTORY
+),
+Total_Inventory AS (
+    SELECT
+        SUM(Property_Inventory) AS Total_Inventory 
+    FROM Inventory_Per_Property
+),
+Room_Nights_Per_Month AS (
+    SELECT 
+        DATE_TRUNC('month', CHECK_IN_DATE) AS Month,
+        EXTRACT(YEAR FROM CHECK_IN_DATE) AS Year,
+        SUM(ROOM_NIGHTS) AS Total_Room_Nights_Booked 
+    FROM booking_df
+    WHERE EXTRACT(YEAR FROM CHECK_IN_DATE) IN (2023, 2024)  -- Batasan untuk tahun 2023 dan 2024
+    GROUP BY DATE_TRUNC('month', CHECK_IN_DATE), EXTRACT(YEAR FROM CHECK_IN_DATE)
+)
+SELECT 
+    r.Month,
+    r.Total_Room_Nights_Booked,
+    t.Total_Inventory * 30 AS Total_Inventory_Month,  -- Total Inventory untuk satu bulan (diasumsikan 30 hari)
+    (r.Total_Room_Nights_Booked * 100.0) / (t.Total_Inventory * 30) AS Occupancy_Rate 
+FROM Room_Nights_Per_Month r
+CROSS JOIN Total_Inventory t 
+ORDER BY r.Month;
+------- peak normal
+SELECT SEASON,
+       EXTRACT(YEAR FROM CHECK_IN_DATE) AS YEAR,
+       COUNT(BOOKING_ID) AS Total_Bookings,
+       SUM(revenue_dollar) AS Total_Revenue,
+       SUM (ROOMS) as Total_Rooms,
+       SUM(revenue_dollar) / SUM(ROOMS) AS ADR  -- Menghitung ADR dengan Total Revenue dibagi Total Rooms Sold
+FROM (
+    SELECT *,
+           CASE 
+               WHEN CHECK_IN_DATE BETWEEN '2023-12-15' AND '2024-01-15' THEN 'Peak Season'
+               WHEN CHECK_IN_DATE BETWEEN '2023-06-20' AND '2023-08-31' THEN 'Peak Season'
+               WHEN CHECK_IN_DATE BETWEEN '2024-06-20' AND '2024-08-31' THEN 'Peak Season'
+               WHEN CHECK_IN_DATE BETWEEN '2023-04-20' AND '2023-05-01' THEN 'Peak Season'
+               WHEN CHECK_IN_DATE BETWEEN '2024-04-05' AND '2024-04-20' THEN 'Peak Season'
+               ELSE 'Normal Season'
+           END AS SEASON
+    FROM booking_df
+    WHERE EXTRACT(YEAR FROM CHECK_IN_DATE) IN (2023, 2024)
+) AS season_data
+GROUP BY SEASON, EXTRACT(YEAR FROM CHECK_IN_DATE)
+ORDER BY YEAR, SEASON;
