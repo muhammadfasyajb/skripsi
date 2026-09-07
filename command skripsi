@@ -1,0 +1,88 @@
+cd "C:\stata_fasyats"
+global data "C:\stata_fasyats\data"
+global log "C:\stata_fasyats\log"
+global output "C:\stata_fasyats\output"
+
+log using "$log\draftrevisi5", replace
+
+use "C:\stata_fasyats\Data\datarevisiclean.dta", clear
+
+desc
+xtset countryid year
+
+* ============================================================
+* STATISTIK DESKRIPTIF
+* ============================================================
+tabstat tfr rrpp oadr gdppc lfpr mysw imr urb unemp covid, ///
+    stats(n mean sd min max) columns(statistics)
+	
+
+* ============================================================
+* VIF CHECK
+* ============================================================
+reg ltfr lrrpp oadr lgdppc lfcepc lfpr lmysw limr urb unemp covid 
+estat vif 
+
+reg ltfr lrrpp oadr lgdppc lfpr lmysw limr urb unemp covid 
+estat vif 
+
+* ============================================================
+* MODEL SELECTION TESTS — Full Sample
+* ============================================================
+
+* Uji Chow: Pooled vs FE
+reg ltfr lrrpp oadr lgdppc  lfpr lmysw limr urb unemp covid i.countryid
+testparm i.countryid
+
+
+
+*Uji LM Breusch-Pagan: RE vs Pooled
+xtreg ltfr lrrpp oadr lgdppc lfpr lmysw limr urb unemp covid, re
+xttest0
+
+* Uji Hausman: FE vs RE
+xtreg ltfr lrrpp oadr lgdppc lfprf lmysw limr urb unemp covid , fe
+est store fe
+
+xtreg ltfr lrrpp oadr lgdppc  lfpr lmysw limr urb unemp covid , re
+est store re
+hausman fe re
+
+
+
+* ============================================================
+* UJI ASUMSI — FULL SAMPLE 
+* ============================================================
+
+*Uji Heterokedastisitas
+xtreg ltfr lrrpp oadr lgdppc  lfpr lmysw limr urb unemp covid , fe
+xttest3
+
+
+*Uji Autokorelasi
+xtserial ltfr lrrpp oadr lgdppc  lfpr lmysw limr urb unemp covid 
+
+
+* ============================================================
+* MODEL AKHIR — FULL SAMPLE
+* ============================================================
+
+xtreg ltfr lrrpp oadr lgdppc lfpr lmysw limr urb unemp covid, fe vce(cluster countryid)
+estimates store FE
+
+* Uji Simultan (Joint Significance) — Full Sample
+testparm ltfr lrrpp oadr lgdppc lfpr lmysw limr urb unemp covid 
+
+esttab FE using "Hasil Estimasi Fixed Effect Model1.rtf", ///
+    cells("b(star fmt(3)) p(fmt(3))" "se(par fmt(3)) .") ///
+    star(* 0.10 ** 0.05 *** 0.01) ///
+    collabels("Koefisien" "P-value") ///
+    title("Tabel 2: Model Fixed Effects ") ///
+    scalars(N r2 r2_within) ///
+    varwidth(25) label ///
+    nomtitles ///
+    compress ///
+    note("Clustered SE in parentheses.") replace
+
+
+log close
